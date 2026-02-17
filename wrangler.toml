@@ -20,7 +20,7 @@ class_name = "ChatRoom"
 # Indicate that you want the ChatRoom class to be callable as Durable Objects.
 [[migrations]]
 tag = "v1" # Should be unique for each entry
-new_classes = ["ChatRoom"]
+new_sqlite_classes = ["ChatRoom"]
 
 # The necessary secrets are:
 # - CALLS_APP_SECRET

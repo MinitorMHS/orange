@@ -1,4 +1,4 @@
-name = "orange-meets"
+name = "meet"
 # https://developers.cloudflare.com/workers/platform/compatibility-dates
 compatibility_date = "2024-10-07"
 main = "./build/index.js"

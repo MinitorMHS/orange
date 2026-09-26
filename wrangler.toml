@@ -10,9 +10,38 @@ compatibility_flags = ["nodejs_compat"]
 [vars]
 CALLS_APP_ID = "88d55cfc603cac89c8d588b767ca476f"
 TURN_SERVICE_ID = "ac69f8829674e02746fea4b7058a0ff4"
+# End-to-end encryption of media between participants (MLS; assets in public/e2ee)
+E2EE_ENABLED = "true"
+# Simulcast webcam layers (useful for multi-party video on weak networks).
+# Uncomment to enable; audio-only calls don't need it.
+# EXPERIMENTAL_SIMULCAST_ENABLED = "true"
+# Optional webhook (e.g. Google Chat) that bug reports get forwarded to.
+# Bug-report button + dead-track API only activate when this is set.
+# FEEDBACK_URL = ""
 
-# Optional vars
-# OPENAI_MODEL_ENDPOINT = ""
+# Workers Logs: console.log + uncaught exceptions visible in dashboard / wrangler tail
+[observability]
+enabled = true
+
+# Call-quality feedback ("Experience any issues?" page after a call) -> D1
+[[kv_namespaces]]
+binding = "FEEDBACK_STORAGE"
+id = "REPLACE_WITH_KV_ID" # npx wrangler kv:namespace create FEEDBACK_STORAGE
+
+[[queues.producers]]
+queue = "meet-feedback"
+binding = "FEEDBACK_QUEUE"
+
+[[queues.consumers]]
+queue = "meet-feedback"
+max_batch_size = 10
+max_batch_timeout = 5
+
+# Meetings + feedback analytics tables (schema.ts); applied via wrangler d1 execute
+[[d1_databases]]
+binding = "DB"
+database_name = "meet-db"
+database_id = "REPLACE_WITH_D1_ID" # npx wrangler d1 create meet-db
 
 [[durable_objects.bindings]]
 name = "rooms"

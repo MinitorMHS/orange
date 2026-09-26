@@ -14,10 +14,10 @@ TURN_SERVICE_ID = "ac69f8829674e02746fea4b7058a0ff4"
 E2EE_ENABLED = "true"
 # Simulcast webcam layers (useful for multi-party video on weak networks).
 # Uncomment to enable; audio-only calls don't need it.
-# EXPERIMENTAL_SIMULCAST_ENABLED = "true"
+EXPERIMENTAL_SIMULCAST_ENABLED = "true"
 # Optional webhook (e.g. Google Chat) that bug reports get forwarded to.
 # Bug-report button + dead-track API only activate when this is set.
-# FEEDBACK_URL = ""
+FEEDBACK_URL = "https://t.me/minitor"
 
 # Workers Logs: console.log + uncaught exceptions visible in dashboard / wrangler tail
 [observability]
@@ -26,7 +26,7 @@ enabled = true
 # Call-quality feedback ("Experience any issues?" page after a call) -> D1
 [[kv_namespaces]]
 binding = "FEEDBACK_STORAGE"
-id = "REPLACE_WITH_KV_ID" # npx wrangler kv:namespace create FEEDBACK_STORAGE
+id = "60e53cbaa9e94327b57303be75f60ec1" # npx wrangler kv:namespace create FEEDBACK_STORAGE
 
 [[queues.producers]]
 queue = "meet-feedback"
@@ -41,7 +41,7 @@ max_batch_timeout = 5
 [[d1_databases]]
 binding = "DB"
 database_name = "meet-db"
-database_id = "REPLACE_WITH_D1_ID" # npx wrangler d1 create meet-db
+database_id = "4d11613c-1ab4-4d97-9737-faddebfb0add" # npx wrangler d1 create meet-db
 
 [[durable_objects.bindings]]
 name = "rooms"

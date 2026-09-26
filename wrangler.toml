@@ -8,7 +8,8 @@ compatibility_flags = ["nodejs_compat"]
   bucket = "./public"
 
 [vars]
-CALLS_APP_ID = "fa78c0621b15f1cf06661f2f9c33395c"
+# CALLS_APP_ID = ""
+TURN_SERVICE_ID = "ecf4ee4e1671e050b2a8b96ef711496e"
 
 # Optional vars
 # OPENAI_MODEL_ENDPOINT = ""

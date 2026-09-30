@@ -3,20 +3,42 @@
 import { Observable } from 'rxjs'
 import invariant from 'tiny-invariant'
 
-export default function noiseSuppression(
-	originalAudioStreamTrack: MediaStreamTrack
-): Observable<MediaStreamTrack> {
-	return new Observable<MediaStreamTrack>((subscriber) => {
-		const mediaStream = new MediaStream()
-		mediaStream.addTrack(originalAudioStreamTrack)
-		const suppressor = new NoiseSuppressionEffect()
-		const output = suppressor.startEffect(mediaStream)
-		const noiseSuppressedTrack = output.getAudioTracks()[0]
-		subscriber.add(() => {
-			suppressor.stopEffect()
+/**
+ * How hard the gate that runs after RNNoise suppresses non-speech audio.
+ * `off` reproduces the original RNNoise-only behaviour.
+ */
+export const NOISE_SUPPRESSION_STRENGTHS = [
+	'off',
+	'light',
+	'balanced',
+	'strong',
+] as const
+
+export type NoiseSuppressionStrength =
+	(typeof NOISE_SUPPRESSION_STRENGTHS)[number]
+
+/**
+ * Builds the rxjs operator for a given strength.
+ *
+ * A factory rather than a bare function so the caller gets a stable identity
+ * per strength, which is what `addTransform` / `removeTransform` pair on.
+ */
+export function makeNoiseSuppression(strength: NoiseSuppressionStrength) {
+	return function noiseSuppression(
+		originalAudioStreamTrack: MediaStreamTrack
+	): Observable<MediaStreamTrack> {
+		return new Observable<MediaStreamTrack>((subscriber) => {
+			const mediaStream = new MediaStream()
+			mediaStream.addTrack(originalAudioStreamTrack)
+			const suppressor = new NoiseSuppressionEffect()
+			const output = suppressor.startEffect(mediaStream, strength)
+			const noiseSuppressedTrack = output.getAudioTracks()[0]
+			subscriber.add(() => {
+				suppressor.stopEffect()
+			})
+			subscriber.next(noiseSuppressedTrack)
 		})
-		subscriber.next(noiseSuppressedTrack)
-	})
+	}
 }
 
 /**
@@ -44,6 +66,14 @@ class NoiseSuppressionEffect {
 	private _noiseSuppressorNode?: AudioWorkletNode
 
 	/**
+	 * Transient gate node, chained after the denoiser.
+	 *
+	 * RNNoise preserves speech rather than gating, so impulsive transients like a
+	 * mouse click survive it. This node adds the gate that RNNoise omits.
+	 */
+	private _transientGateNode?: AudioWorkletNode
+
+	/**
 	 * Audio track extracted from the original MediaStream to which the effect is applied.
 	 */
 	private _originalMediaTrack?: MediaStreamTrack
@@ -55,12 +85,16 @@ class NoiseSuppressionEffect {
 
 	/**
 	 * Applies effect that uses a {@code NoiseSuppressor} service initialized with {@code RnnoiseProcessor}
-	 * for denoising.
+	 * for denoising, chained into a transient gate.
 	 *
 	 * @param {MediaStream} audioStream - Audio stream which will be mixed with _mixAudio.
+	 * @param {NoiseSuppressionStrength} strength - How hard the gate suppresses non-speech audio.
 	 * @returns {MediaStream} - MediaStream containing both audio tracks mixed together.
 	 */
-	startEffect(audioStream: MediaStream): MediaStream {
+	startEffect(
+		audioStream: MediaStream,
+		strength: NoiseSuppressionStrength
+	): MediaStream {
 		this._audioContext = new AudioContext()
 		this._originalMediaTrack = audioStream.getAudioTracks()[0]
 		this._audioSource = this._audioContext.createMediaStreamSource(audioStream)
@@ -68,10 +102,13 @@ class NoiseSuppressionEffect {
 		this._outputMediaTrack = this._audioDestination.stream.getAudioTracks()[0]
 
 		const workletUrl = `/noise/noise-suppressor-worklet.esm.js`
+		const gateWorkletUrl = `/noise/transient-gate-worklet.js`
 
-		// Connect the audio processing graph MediaStream -> AudioWorkletNode -> MediaStreamAudioDestinationNode
+		// Connect the audio processing graph
+		// MediaStream -> NoiseSuppressorWorklet -> TransientGateProcessor -> MediaStreamAudioDestinationNode
 		this._audioContext.audioWorklet
 			.addModule(workletUrl)
+			.then(() => this._audioContext?.audioWorklet.addModule(gateWorkletUrl))
 			.then(() => {
 				invariant(this._audioContext)
 				if (this._audioContext.state === 'closed') return
@@ -80,10 +117,16 @@ class NoiseSuppressionEffect {
 					this._audioContext,
 					'NoiseSuppressorWorklet'
 				)
+				this._transientGateNode = new AudioWorkletNode(
+					this._audioContext,
+					'TransientGateProcessor',
+					{ processorOptions: { strength } }
+				)
 				invariant(this._audioSource)
 				invariant(this._audioDestination)
 				this._audioSource
 					.connect(this._noiseSuppressorNode)
+					.connect(this._transientGateNode)
 					.connect(this._audioDestination)
 			})
 			.catch((error) => {
@@ -115,7 +158,9 @@ class NoiseSuppressionEffect {
 		// however on chrome there seems to be a problem as described here:
 		// https://bugs.chromium.org/p/chromium/issues/detail?id=1298955
 		this._noiseSuppressorNode?.port?.close()
+		this._transientGateNode?.port?.close()
 		this._audioDestination?.disconnect()
+		this._transientGateNode?.disconnect()
 		this._noiseSuppressorNode?.disconnect()
 		this._audioSource?.disconnect()
 		this._audioContext?.close()

@@ -1,10 +1,13 @@
 import { getCamera, getMic, getScreenshare } from 'partytracks/client'
 import { useObservable, useObservableAsValue } from 'partytracks/react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useLocalStorage } from 'react-use'
 import blurVideoTrack from '~/utils/blurVideoTrack'
 import { mode } from '~/utils/mode'
-import noiseSuppression from '~/utils/noiseSuppression'
+import {
+	makeNoiseSuppression,
+	type NoiseSuppressionStrength,
+} from '~/utils/noiseSuppression'
 
 export const errorMessageMap = {
 	NotAllowedError:
@@ -36,14 +39,30 @@ function useNoiseSuppression() {
 		'suppress-noise',
 		false
 	)
+	const [noiseSuppressionStrength, setNoiseSuppressionStrength] =
+		useLocalStorage<NoiseSuppressionStrength>(
+			'noise-suppression-strength',
+			'balanced'
+		)
+	// Stable per strength, so addTransform/removeTransform pair on the same
+	// function and changing strength rebuilds the chain cleanly.
+	const transform = useMemo(
+		() => makeNoiseSuppression(noiseSuppressionStrength),
+		[noiseSuppressionStrength]
+	)
 	useEffect(() => {
-		if (suppressNoise) mic.addTransform(noiseSuppression)
+		if (suppressNoise) mic.addTransform(transform)
 		return () => {
-			mic.removeTransform(noiseSuppression)
+			mic.removeTransform(transform)
 		}
-	}, [suppressNoise])
+	}, [suppressNoise, transform])
 
-	return [suppressNoise, setSuppressNoise] as const
+	return [
+		suppressNoise,
+		setSuppressNoise,
+		noiseSuppressionStrength,
+		setNoiseSuppressionStrength,
+	] as const
 }
 
 function useBlurVideo() {
@@ -104,7 +123,12 @@ export default function useUserMedia(options: {
 			})
 	}, [options.cameraDeviceId])
 
-	const [suppressNoise, setSuppressNoise] = useNoiseSuppression()
+	const [
+		suppressNoise,
+		setSuppressNoise,
+		noiseSuppressionStrength,
+		setNoiseSuppressionStrength,
+	] = useNoiseSuppression()
 	const [blurVideo, setBlurVideo] = useBlurVideo()
 
 	const [videoUnavailableReason, setVideoUnavailableReason] =
@@ -171,6 +195,8 @@ export default function useUserMedia(options: {
 		setBlurVideo,
 		suppressNoise,
 		setSuppressNoise,
+		noiseSuppressionStrength,
+		setNoiseSuppressionStrength,
 		videoTrack$: camera.broadcastTrack$,
 		videoStreamTrack: useObservableAsValue(camera.broadcastTrack$),
 

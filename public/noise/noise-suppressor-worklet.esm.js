@@ -559,14 +559,46 @@ class RnnoiseProcessor {
 	}
 }
 
+/**
+ * Trim applied on top of RNNoise, driven by the VAD probability that
+ * `rnnoise_process_frame` already returns and this file was discarding.
+ *
+ * RNNoise is a spectral denoiser: it works on the noise it can model, and it
+ * leaves alone whatever does not look like noise to it. The VAD score is a
+ * different, trained judgement about whether the frame is speech at all, so it
+ * closes the gap on the steady, non-speech residue RNNoise under-suppresses:
+ * fans, hum, room tone. It is a trim, not a second denoiser; `attenuation` is
+ * the deepest this may duck a non-speech frame, and 0 must reproduce the
+ * original pass-through exactly.
+ *
+ * It cannot help with a television in the room. TV dialogue is speech, in the
+ * same 300 Hz-3.4 kHz band as the speaker's own voice, so the VAD scores it as
+ * speech and passes it. Separating the two needs a classifier trained on the
+ * speaker, or a second mic aimed at them with the TV outside its response.
+ */
+const RNNOISE_GATE_PRESETS = {
+	off: { attenuation: 0, attack: 0, release: 0 },
+	light: { attenuation: 0.35, attack: 0.6, release: 0.25 },
+	balanced: { attenuation: 0.6, attack: 0.7, release: 0.35 },
+	strong: { attenuation: 0.85, attack: 0.8, release: 0.5 },
+}
+
 class Channel {
-	constructor(processor, denoiseSampleSize) {
+	constructor(processor, denoiseSampleSize, gate) {
 		this._procNodeSampleRate = 128
 		this._inputBufferLength = 0
 		this._denoisedBufferLength = 0
 		this._denoisedBufferIndx = 0
 		this._denoiseProcessor = processor
 		this._denoiseSampleSize = denoiseSampleSize
+		this._gate = gate
+		// Start fully open so the first frames are not attenuated before the
+		// VAD has said anything; converges within a few frames either way.
+		this._gateGain = 1
+		// Frames of speech the VAD has seen recently. Drives `attack`/`release`,
+		// so the gate opens on the first speech frame instead of ramping to it.
+		this._speechRun = 0
+		this._silenceRun = 0
 		this._circularBufferLength = leastCommonMultiple(
 			this._procNodeSampleRate,
 			this._denoiseSampleSize
@@ -589,7 +621,15 @@ class Channel {
 				this._denoisedBufferLength,
 				this._denoisedBufferLength + this._denoiseSampleSize
 			)
-			this._denoiseProcessor.processAudioFrame(denoiseFrame, true)
+			// `processAudioFrame` hands back the VAD probability alongside the
+			// denoised samples; this used to drop it on the floor.
+			const vadScore = this._denoiseProcessor.processAudioFrame(
+				denoiseFrame,
+				true
+			)
+			if (this._gate && this._gate.attenuation > 0) {
+				this._applyGate(denoiseFrame, vadScore)
+			}
 		}
 		let unsentDenoisedDataLength
 		if (this._denoisedBufferIndx > this._denoisedBufferLength) {
@@ -615,16 +655,46 @@ class Channel {
 			this._denoisedBufferLength = 0
 		}
 	}
+	/**
+	 * Ducks a frame RNNoise judged to be non-speech.
+	 *
+	 * Smoothing is asymmetric: `attack` collapses toward the new target quickly
+	 * so speech is never clipped on the way in, `release` eases back so a
+	 * consonant gap does not chop the next word. Below the gate, the frame is
+	 * scaled toward `attenuation` rather than to zero, which keeps a floor of
+	 * room tone under the signal instead of gating into dead air.
+	 */
+	_applyGate(frame, vadScore) {
+		const { attenuation, attack, release } = this._gate
+		// rnnoise returns a probability; clamp defensively so a bad score can
+		// never produce a gain outside [1 - attenuation, 1].
+		const speech = vadScore < 0 ? 0 : vadScore > 1 ? 1 : vadScore
+		if (speech > 0.5) {
+			this._speechRun += 1
+			this._silenceRun = 0
+		} else {
+			this._silenceRun += 1
+			this._speechRun = 0
+		}
+		const target = 1 - attenuation * (1 - speech)
+		const smoothing = this._speechRun > 0 ? attack : release
+		this._gateGain = this._gateGain + (target - this._gateGain) * smoothing
+		for (let i = 0; i < frame.length; i++) {
+			frame[i] *= this._gateGain
+		}
+	}
 }
 class NoiseSuppressorWorklet extends AudioWorkletProcessor {
-	constructor() {
+	constructor(options) {
 		super()
 		const denoiseProcessorL = new RnnoiseProcessor(createRNNWasmModuleSync())
 		const denoiseProcessorR = new RnnoiseProcessor(createRNNWasmModuleSync())
 		const denoiseSampleSizeL = denoiseProcessorL.getSampleLength()
 		const denoiseSampleSizeR = denoiseProcessorR.getSampleLength()
-		this.leftChannel = new Channel(denoiseProcessorL, denoiseSampleSizeL)
-		this.rightChannel = new Channel(denoiseProcessorR, denoiseSampleSizeR)
+		const strength = options?.processorOptions?.strength ?? 'off'
+		const gate = RNNOISE_GATE_PRESETS[strength] ?? RNNOISE_GATE_PRESETS.off
+		this.leftChannel = new Channel(denoiseProcessorL, denoiseSampleSizeL, gate)
+		this.rightChannel = new Channel(denoiseProcessorR, denoiseSampleSizeR, gate)
 	}
 	process(inputs, outputs) {
 		const inLeft = inputs[0][0]
@@ -640,3 +710,6 @@ class NoiseSuppressorWorklet extends AudioWorkletProcessor {
 	}
 }
 registerProcessor('NoiseSuppressorWorklet', NoiseSuppressorWorklet)
+// Exported for tests. Registering a processor is a side effect guarded by
+// `registerProcessor` existing, so importing this in Node is safe.
+export { Channel, RNNOISE_GATE_PRESETS }

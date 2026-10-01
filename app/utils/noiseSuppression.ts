@@ -115,7 +115,8 @@ class NoiseSuppressionEffect {
 				// After the resolution of module loading, an AudioWorkletNode can be constructed.
 				this._noiseSuppressorNode = new AudioWorkletNode(
 					this._audioContext,
-					'NoiseSuppressorWorklet'
+					'NoiseSuppressorWorklet',
+					{ processorOptions: { strength } }
 				)
 				this._transientGateNode = new AudioWorkletNode(
 					this._audioContext,
